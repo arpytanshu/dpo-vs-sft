@@ -13,7 +13,7 @@ MODEL_STR = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
 
 
 
-output_dir = "checkpoints/run5"
+output_dir = "checkpoints/run6"
 checkpoint_path=None
 lora=False
 lora_r=32
@@ -53,17 +53,17 @@ training_args = TrainingArguments(
     output_dir=output_dir,
     per_device_train_batch_size=32,
     per_device_eval_batch_size=16,
-    gradient_accumulation_steps=1,
+    gradient_accumulation_steps=2,
     learning_rate=1.41e-5,
     logging_steps=10,
     num_train_epochs=3,
-    max_steps=2500,
+    max_steps=5000,
     report_to="tensorboard",
     evaluation_strategy='steps',
     eval_steps=100,
     save_strategy="steps",
-    save_steps=250,
-    save_total_limit=1,
+    save_steps=500,
+    save_total_limit=2,
     gradient_checkpointing=True,
     bf16=True,
     remove_unused_columns=False
@@ -90,9 +90,6 @@ else:
     trainer.train()
 
 
-
-# main(checkpoint_path='checkpoints/run1', lora=True, lora_r=64, lora_alpha=64)
-# main(output_dir="checkpoints/run2", checkpoint_path='checkpoints/run2/checkpoint-1750')
 
 
 
