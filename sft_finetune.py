@@ -6,7 +6,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments,
 from peft import get_peft_model, LoraConfig, prepare_model_for_kbit_training
 
 from data import getHellaSwag
-from utils import Collater, CustomDataset, MyCallback, create_logger
+from utils import SFTCollater, CustomDataset, MyCallback, create_logger, sft_custom_eval
 
 
 MODEL_STR = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
@@ -46,7 +46,7 @@ tokenizer.pad_token_id = tokenizer.unk_token_id
 dataset = getHellaSwag('dataset_cache/hellaswag_sft')
 train_dataset = CustomDataset(dataset['train'])
 eval_dataset = dataset['eval']
-collater = Collater(tokenizer, mode='train')
+collater = SFTCollater(tokenizer, mode='train')
 
 # TRAINER
 training_args = TrainingArguments(
@@ -69,8 +69,10 @@ training_args = TrainingArguments(
     remove_unused_columns=False
 )
 
-custom_callbacks = [MyCallback(eval_dataset=dataset['eval'], 
-                                logger=create_logger(training_args.output_dir))]
+custom_callbacks = [MyCallback(eval_dataset=dataset['eval'],
+                               eval_fn=sft_custom_eval,
+                               logger=create_logger(training_args.output_dir))]
+
 
 trainer = Trainer(
     model=model,

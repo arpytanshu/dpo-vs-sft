@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader, Dataset
 from transformers import TrainerCallback
 import sys
 
-class Collater:
+class SFTCollater:
     '''
     collater = Collater(tokenizer, ctx_labels=False, mode='train')
     batch = collater.get_debug_batch()
@@ -86,6 +86,7 @@ class Collater:
 
 
 
+
 class CustomDataset(Dataset):
     '''
     The default Random Sampler samples each sample exactly once per epoch.
@@ -100,9 +101,9 @@ class CustomDataset(Dataset):
     def __len__(self):
         return len(self.ds)
 
-def custom_eval(model, tokenizer, dataset):
+def sft_custom_eval(model, tokenizer, dataset):
     
-    collater = Collater(tokenizer, ctx_labels=None, mode=None)
+    collater = SFTCollater(tokenizer, ctx_labels=None, mode=None)
     dl = DataLoader(dataset, batch_size=24, shuffle=False, collate_fn=collater)
     
     model.eval()
@@ -124,10 +125,67 @@ def custom_eval(model, tokenizer, dataset):
 
     return dict(correct=correct, total=total, accuracy=round(correct/total, 3))
 
+
+class DPOCollater:
+    def __init__(self, tokenizer):
+        self.tokenizer = tokenizer
+        self.eos_id = tokenizer.eos_token_id
+        self.bos_id = tokenizer.bos_token_id
+        self.pad_id = tokenizer.pad_token_id
+        
+    def __call__(self, batch):
+        return self.custom_eval_collater(batch)
+    
+    def get_debug_batch(self):
+        return [
+            {
+                'prompt': 'Task: Choose the date.\nAnswer: ',
+                'chosen': 'A. However',
+                'rejected': 'B. Somewhere'
+            },
+            {
+                'prompt': 'Task: How to clean an ultra boost sole.\nAnswer: ',
+                'chosen': 'D. After you use.',
+                'rejected': 'C. Kill them all.'
+            }
+        ]
+        
+    def custom_eval_collater(self, batch):      
+        prompt = [x['prompt'] for x in batch]
+        responses = [x['chosen'][0] for x in batch]
+        inputs = self.tokenizer(prompt, padding=True, return_tensors='pt')
+        responses = self.tokenizer(responses, add_special_tokens=False, return_tensors='pt')['input_ids']
+        return inputs, responses
+
+def dpo_custom_eval(model, tokenizer, dataset):
+    # collater = SFTCollater(tokenizer, ctx_labels=None, mode=None)
+    collater = DPOCollater(tokenizer)
+    dl = DataLoader(dataset, batch_size=16, shuffle=False, collate_fn=collater)
+    
+    model.eval()
+    correct = 0
+    total = 0
+    for ix, batch in enumerate(dl):
+        inputs, responses = batch
+        with torch.no_grad():
+            out = model(**inputs.to(model.device))
+        logits = out.logits[:,-1,:]
+        probs = torch.softmax(logits, dim=1)
+        preds = torch.argmax(probs, dim=1)
+        for gt, pred in zip(responses.ravel().tolist(), preds.cpu().ravel().tolist()):
+            total += 1
+            if gt == pred:
+                correct += 1
+        sys.stdout.write("\rbatch:{} correct={} total={} accuracy={}".format\
+                         (ix, correct, total, round(correct/total, 3)))
+
+    return dict(correct=correct, total=total, accuracy=round(correct/total, 3))
+
 class MyCallback(TrainerCallback):
-    def __init__(self, eval_dataset, logger):
+    def __init__(self, eval_dataset, eval_fn, logger):
         super().__init__()
         self.eval_dataset = eval_dataset
+        self.eval_fn = eval_fn
         self.logger = logger
 
     def on_train_begin(self, args, state, control, **kwargs):
@@ -137,10 +195,15 @@ class MyCallback(TrainerCallback):
         self.logger.info(kwargs['logs'])
     
     def on_evaluate(self, args, state, control, **kwargs):
-        result = custom_eval(model=kwargs['model'], 
-                             tokenizer=kwargs['tokenizer'],
-                             dataset=self.eval_dataset)
+        result = self.eval_fn(model=kwargs['model'], 
+                              tokenizer=kwargs['tokenizer'],
+                              dataset=self.eval_dataset)
         self.logger.info(result)
+
+        ix = random.randint(0, len(self.eval_dataset)-1)
+        input_ids = torch.tensor(self.eval_dataset[ix]['prompt_input_ids']).view(1, -1).to(kwargs['model'].device)
+        out = kwargs['model'].generate(inputs=input_ids)
+        print(kwargs['tokenizer'].decode(out.ravel()))
 
 
 def create_logger(checkpoint_path):
